@@ -22,11 +22,22 @@ warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
 prompt() {
-    local var_name="$1" prompt_text="$2" default="${3:-}"
-    if [[ -n "$default" ]]; then
+    local var_name="$1" prompt_text="$2"
+    local has_default=false default=""
+    if [[ $# -ge 3 ]]; then
+        has_default=true
+        default="$3"
+    fi
+
+    if $has_default && [[ -n "$default" ]]; then
         read -rp "$(echo -e "${BOLD}${prompt_text}${NC} [${default}]: ")" value
         eval "$var_name=\"${value:-$default}\""
+    elif $has_default; then
+        # Optional field — empty is allowed
+        read -rp "$(echo -e "${BOLD}${prompt_text}${NC}: ")" value
+        eval "$var_name=\"$value\""
     else
+        # Required field — empty is not allowed
         read -rp "$(echo -e "${BOLD}${prompt_text}${NC}: ")" value
         [[ -z "$value" ]] && error "A value is required."
         eval "$var_name=\"$value\""
