@@ -613,6 +613,7 @@ info "Creating VM ${VMID} ..."
 qm create "$VMID" \
     --name "$VM_NAME" \
     --ostype l26 \
+    --cpu host \
     --cores "$CPU_CORES" \
     --memory "$RAM_MB" \
     --net0 "$NET0" \
