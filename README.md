@@ -23,7 +23,7 @@ Interactive bash script that creates Ubuntu 22.04 (Jammy) cloud-init VMs on Prox
 
 ```bash
 # Download and run
-wget -O create-vm.sh https://raw.githubusercontent.com/YOUR_USER/proxmox-cloudinit-script/main/create-vm.sh
+wget -O create-vm.sh https://raw.githubusercontent.com/paradosi/proxmox-cloudinit-script/main/create-vm.sh
 chmod +x create-vm.sh
 sudo ./create-vm.sh
 ```
@@ -31,7 +31,7 @@ sudo ./create-vm.sh
 Or clone the repo:
 
 ```bash
-git clone https://github.com/YOUR_USER/proxmox-cloudinit-script.git
+git clone https://github.com/paradosi/proxmox-cloudinit-script.git
 cd proxmox-cloudinit-script
 chmod +x create-vm.sh
 sudo ./create-vm.sh
