@@ -530,6 +530,12 @@ packages:
 PKGEOF
 
 # Conditionally add packages
+if [[ "$OS_FAMILY" == "fedora" ]]; then
+    echo "  - '@Development Tools'" >> "$VENDOR_FILE"
+else
+    echo "  - build-essential" >> "$VENDOR_FILE"
+fi
+
 if $INSTALL_AGENT; then
     echo "  - qemu-guest-agent" >> "$VENDOR_FILE"
 fi
