@@ -405,9 +405,23 @@ cat > "$VENDOR_FILE" <<'VENDOREOF'
 #cloud-config
 package_update: true
 package_upgrade: true
+VENDOREOF
+
+# Enable password SSH auth if a password was set
+if [[ -n "$CI_PASS" ]]; then
+    cat >> "$VENDOR_FILE" <<'PWEOF'
+
+# Enable SSH password authentication
+ssh_pwauth: true
+chpasswd:
+  expire: false
+PWEOF
+fi
+
+cat >> "$VENDOR_FILE" <<'PKGEOF'
 
 packages:
-VENDOREOF
+PKGEOF
 
 # Conditionally add packages
 if $INSTALL_AGENT; then
