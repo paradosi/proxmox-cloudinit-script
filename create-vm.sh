@@ -235,18 +235,28 @@ fi
 
 SSH_KEYS_FILE=""
 if confirm "Add an SSH public key?"; then
-    prompt SSH_KEY_INPUT "Path to SSH public key file or paste the key" "$HOME/.ssh/id_rsa.pub"
+    prompt SSH_KEY_INPUT "Path to SSH public key file on this server, or paste the key directly" "$HOME/.ssh/id_rsa.pub"
 
     # Resolve the key content
     if [[ -f "$SSH_KEY_INPUT" ]]; then
         SSH_KEY_CONTENT=$(cat "$SSH_KEY_INPUT")
         success "SSH key file found: ${SSH_KEY_INPUT}"
-    else
+    elif echo "$SSH_KEY_INPUT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
+        # Input looks like an actual key pasted inline
         SSH_KEY_CONTENT="$SSH_KEY_INPUT"
+    else
+        # Not a valid file and not a key — probably a path that doesn't exist here
+        warn "File not found: ${SSH_KEY_INPUT}"
+        warn "If the key is on another machine, paste the key content directly."
+        echo
+        read -rp "$(echo -e "${BOLD}Paste your SSH public key (or leave empty to skip)${NC}: ")" SSH_KEY_CONTENT
     fi
 
     # Validate it looks like an SSH public key
-    if ! echo "$SSH_KEY_CONTENT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
+    if [[ -z "$SSH_KEY_CONTENT" ]]; then
+        info "No SSH key provided. Skipping."
+        SSH_KEYS_FILE=""
+    elif ! echo "$SSH_KEY_CONTENT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
         warn "Does not look like a valid SSH public key. Skipping."
         SSH_KEYS_FILE=""
     else
