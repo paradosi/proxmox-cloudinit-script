@@ -76,22 +76,64 @@ echo -e "\n${BOLD}── Storage Detection ──${NC}\n"
 declare -A STORAGE_MAP
 STORAGE_LIST=()
 
+# Parse /etc/pve/storage.cfg to get storage name, type, and content
+CURRENT_NAME=""
+CURRENT_TYPE=""
+while IFS= read -r line; do
+    # Storage definition lines look like: "dir: local" or "lvmthin: local-lvm"
+    if [[ "$line" =~ ^([a-zA-Z]+):\ +(.+)$ ]]; then
+        CURRENT_TYPE="${BASH_REMATCH[1]}"
+        CURRENT_NAME="${BASH_REMATCH[2]}"
+        continue
+    fi
+
+    # Content line inside a storage block
+    if [[ -n "$CURRENT_NAME" && "$line" =~ ^[[:space:]]+content[[:space:]]+(.*) ]]; then
+        content="${BASH_REMATCH[1]}"
+
+        if echo "$content" | grep -q "images"; then
+            # Verify the storage is actually active
+            if pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$CURRENT_NAME"; then
+                STORAGE_MAP["$CURRENT_NAME"]="$CURRENT_TYPE"
+                STORAGE_LIST+=("$CURRENT_NAME")
+
+                case "$CURRENT_TYPE" in
+                    lvmthin|lvm)  label="LVM (${CURRENT_TYPE})" ;;
+                    zfspool)      label="ZFS" ;;
+                    dir)          label="Directory" ;;
+                    nfs|cifs|glusterfs) label="Network (${CURRENT_TYPE})" ;;
+                    rbd|cephfs)   label="Ceph (${CURRENT_TYPE})" ;;
+                    *)            label="${CURRENT_TYPE}" ;;
+                esac
+                echo -e "  ${GREEN}●${NC} ${BOLD}${CURRENT_NAME}${NC} — ${label}"
+            fi
+        fi
+        CURRENT_NAME=""
+        CURRENT_TYPE=""
+    fi
+done < /etc/pve/storage.cfg
+
+# Fallback: some storage types (lvm, lvmthin, zfspool) implicitly support images
+# even without an explicit content line. Check pvesm status for these.
 while IFS= read -r line; do
     [[ "$line" == Name* ]] && continue
     name=$(echo "$line" | awk '{print $1}')
     type=$(echo "$line" | awk '{print $2}')
-    content=$(echo "$line" | awk '{print $4}')
+    status=$(echo "$line" | awk '{print $3}')
 
-    if echo "$content" | grep -q "images"; then
+    # Skip already-found storages or inactive ones
+    [[ -n "${STORAGE_MAP[$name]+x}" ]] && continue
+    [[ "$status" != "active" ]] && continue
+
+    # These types always support disk images
+    if [[ "$type" == "lvmthin" || "$type" == "lvm" || "$type" == "zfspool" || "$type" == "rbd" ]]; then
         STORAGE_MAP["$name"]="$type"
         STORAGE_LIST+=("$name")
 
         case "$type" in
             lvmthin|lvm)  label="LVM (${type})" ;;
             zfspool)      label="ZFS" ;;
-            dir)          label="Directory" ;;
-            nfs|cifs|glusterfs) label="Network (${type})" ;;
-            rbd|cephfs)   label="Ceph (${type})" ;;
+            rbd)          label="Ceph (${type})" ;;
             *)            label="${type}" ;;
         esac
         echo -e "  ${GREEN}●${NC} ${BOLD}${name}${NC} — ${label}"
@@ -292,17 +334,22 @@ fi
 # ──────────────────────────────────────────────
 echo -e "\n${BOLD}── Preparing Cloud-Init Snippets ──${NC}\n"
 
-# Find a storage that supports 'snippets' content type
+# Find a storage that supports 'snippets' content type from storage.cfg
 SNIPPET_STORAGE=""
+SNIP_NAME=""
 while IFS= read -r line; do
-    [[ "$line" == Name* ]] && continue
-    s_name=$(echo "$line" | awk '{print $1}')
-    s_content=$(echo "$line" | awk '{print $4}')
-    if echo "$s_content" | grep -q "snippets"; then
-        SNIPPET_STORAGE="$s_name"
-        break
+    if [[ "$line" =~ ^([a-zA-Z]+):\ +(.+)$ ]]; then
+        SNIP_NAME="${BASH_REMATCH[2]}"
+        continue
     fi
-done < <(pvesm status 2>/dev/null)
+    if [[ -n "$SNIP_NAME" && "$line" =~ ^[[:space:]]+content[[:space:]]+(.*) ]]; then
+        if echo "${BASH_REMATCH[1]}" | grep -q "snippets"; then
+            SNIPPET_STORAGE="$SNIP_NAME"
+            break
+        fi
+        SNIP_NAME=""
+    fi
+done < /etc/pve/storage.cfg
 
 if [[ -z "$SNIPPET_STORAGE" ]]; then
     warn "No storage with 'snippets' content type found."
