@@ -1,0 +1,487 @@
+#!/usr/bin/env bash
+#
+# Interactive Proxmox Cloud-Init VM Creator
+# Creates Ubuntu 22.04 cloud-init VMs on Proxmox VE
+# Installs: qemu-guest-agent, Docker Engine, Docker Compose v2
+#
+set -euo pipefail
+
+# ──────────────────────────────────────────────
+# Colors & helpers
+# ──────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+info()    { echo -e "${CYAN}[INFO]${NC} $*"; }
+success() { echo -e "${GREEN}[OK]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+prompt() {
+    local var_name="$1" prompt_text="$2" default="${3:-}"
+    if [[ -n "$default" ]]; then
+        read -rp "$(echo -e "${BOLD}${prompt_text}${NC} [${default}]: ")" value
+        eval "$var_name=\"${value:-$default}\""
+    else
+        read -rp "$(echo -e "${BOLD}${prompt_text}${NC}: ")" value
+        [[ -z "$value" ]] && error "A value is required."
+        eval "$var_name=\"$value\""
+    fi
+}
+
+prompt_password() {
+    local var_name="$1" prompt_text="$2"
+    read -srp "$(echo -e "${BOLD}${prompt_text}${NC}: ")" value
+    echo
+    eval "$var_name=\"$value\""
+}
+
+confirm() {
+    local msg="$1"
+    read -rp "$(echo -e "${BOLD}${msg}${NC} [y/N]: ")" ans
+    [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
+}
+
+# ──────────────────────────────────────────────
+# Pre-flight checks
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║   Proxmox Ubuntu 22.04 Cloud-Init VM Creator     ║${NC}"
+echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}\n"
+
+if [[ $EUID -ne 0 ]]; then
+    error "This script must be run as root (or with sudo)."
+fi
+
+if ! command -v qm &>/dev/null; then
+    error "This does not appear to be a Proxmox node ('qm' not found)."
+fi
+
+if ! command -v pvesm &>/dev/null; then
+    error "'pvesm' not found. Is Proxmox VE installed?"
+fi
+
+PVE_VERSION=$(pveversion 2>/dev/null || echo "unknown")
+info "Proxmox VE version: ${PVE_VERSION}"
+
+# ──────────────────────────────────────────────
+# Storage detection
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Storage Detection ──${NC}\n"
+
+declare -A STORAGE_MAP
+STORAGE_LIST=()
+
+while IFS= read -r line; do
+    [[ "$line" == Name* ]] && continue
+    name=$(echo "$line" | awk '{print $1}')
+    type=$(echo "$line" | awk '{print $2}')
+    content=$(echo "$line" | awk '{print $4}')
+
+    if echo "$content" | grep -q "images"; then
+        STORAGE_MAP["$name"]="$type"
+        STORAGE_LIST+=("$name")
+
+        case "$type" in
+            lvmthin|lvm)  label="LVM (${type})" ;;
+            zfspool)      label="ZFS" ;;
+            dir)          label="Directory" ;;
+            nfs|cifs|glusterfs) label="Network (${type})" ;;
+            rbd|cephfs)   label="Ceph (${type})" ;;
+            *)            label="${type}" ;;
+        esac
+        echo -e "  ${GREEN}●${NC} ${BOLD}${name}${NC} — ${label}"
+    fi
+done < <(pvesm status 2>/dev/null)
+
+if [[ ${#STORAGE_LIST[@]} -eq 0 ]]; then
+    error "No storage pools with 'images' content type found."
+fi
+
+echo
+if [[ ${#STORAGE_LIST[@]} -eq 1 ]]; then
+    STORAGE="${STORAGE_LIST[0]}"
+    info "Only one storage available, auto-selected: ${STORAGE} (${STORAGE_MAP[$STORAGE]})"
+else
+    prompt STORAGE "Select storage pool (${STORAGE_LIST[*]})" "${STORAGE_LIST[0]}"
+    if [[ -z "${STORAGE_MAP[$STORAGE]+x}" ]]; then
+        error "Invalid storage pool: ${STORAGE}"
+    fi
+fi
+
+STORAGE_TYPE="${STORAGE_MAP[$STORAGE]}"
+success "Using storage: ${STORAGE} (${STORAGE_TYPE})"
+
+# ──────────────────────────────────────────────
+# VM configuration prompts
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── VM Configuration ──${NC}\n"
+
+while true; do
+    prompt VMID "VM ID (100-999999)" "9000"
+    if ! [[ "$VMID" =~ ^[0-9]+$ ]] || [[ "$VMID" -lt 100 ]]; then
+        warn "VM ID must be a number >= 100. Try again."
+        continue
+    fi
+    if qm status "$VMID" &>/dev/null; then
+        warn "VM ${VMID} already exists. Choose a different ID."
+        continue
+    fi
+    break
+done
+
+prompt VM_NAME "VM hostname" "ubuntu-cloud"
+prompt CPU_CORES "CPU cores" "2"
+prompt RAM_MB "RAM in MB" "2048"
+prompt DISK_SIZE "Disk size (e.g. 20G, 50G)" "20G"
+
+# ──────────────────────────────────────────────
+# Network configuration
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Network Configuration ──${NC}\n"
+
+BRIDGES=$(ip link show type bridge 2>/dev/null | grep -oP '^\d+: \K[^:]+' || echo "vmbr0")
+info "Detected bridges: ${BRIDGES}"
+
+prompt BRIDGE "Network bridge" "vmbr0"
+
+echo -e "  ${CYAN}1)${NC} DHCP"
+echo -e "  ${CYAN}2)${NC} Static IP"
+prompt IP_MODE "IP mode (1 or 2)" "2"
+
+if [[ "$IP_MODE" == "2" ]]; then
+    prompt VM_IP "Static IP with CIDR (e.g. 192.168.1.100/24)" ""
+    prompt GATEWAY "Gateway" ""
+    prompt DNS_SERVERS "DNS servers (comma-separated)" "1.1.1.1,8.8.8.8"
+    prompt DNS_DOMAIN "Search domain (optional)" ""
+    IP_CONFIG="ip=${VM_IP},gw=${GATEWAY}"
+else
+    IP_CONFIG="ip=dhcp"
+    DNS_SERVERS=""
+    DNS_DOMAIN=""
+fi
+
+prompt VLAN_TAG "VLAN tag (leave empty for none)" ""
+
+# ──────────────────────────────────────────────
+# User & SSH configuration
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── User & SSH Configuration ──${NC}\n"
+
+prompt CI_USER "Cloud-init username" "ubuntu"
+
+if confirm "Set a password for ${CI_USER}?"; then
+    prompt_password CI_PASS "Password"
+else
+    CI_PASS=""
+fi
+
+SSH_KEYS_FILE=""
+if confirm "Add an SSH public key?"; then
+    prompt SSH_KEY_INPUT "Path to SSH public key file or paste the key" "$HOME/.ssh/id_rsa.pub"
+    if [[ -f "$SSH_KEY_INPUT" ]]; then
+        SSH_KEYS_FILE="$SSH_KEY_INPUT"
+        success "SSH key file found: ${SSH_KEYS_FILE}"
+    else
+        SSH_KEYS_FILE=$(mktemp /tmp/ssh_key_XXXXXX.pub)
+        echo "$SSH_KEY_INPUT" > "$SSH_KEYS_FILE"
+        success "SSH key saved to temporary file."
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# Software options
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Software Packages ──${NC}\n"
+
+info "The following will be installed via cloud-init on first boot:"
+echo -e "  ${GREEN}●${NC} qemu-guest-agent"
+echo -e "  ${GREEN}●${NC} Docker Engine (official repo)"
+echo -e "  ${GREEN}●${NC} Docker Compose v2 (plugin)"
+echo
+
+INSTALL_DOCKER=true
+if ! confirm "Install Docker + Compose v2?"; then
+    INSTALL_DOCKER=false
+fi
+
+INSTALL_AGENT=true
+if ! confirm "Install qemu-guest-agent?"; then
+    INSTALL_AGENT=false
+fi
+
+# ──────────────────────────────────────────────
+# Cloud image
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Cloud Image ──${NC}\n"
+
+CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+CLOUD_IMG_PATH="/var/lib/vz/template/iso/jammy-server-cloudimg-amd64.img"
+
+if [[ -f "$CLOUD_IMG_PATH" ]]; then
+    success "Cloud image already downloaded: ${CLOUD_IMG_PATH}"
+else
+    info "Ubuntu 22.04 cloud image not found locally."
+    if confirm "Download Ubuntu 22.04 (Jammy) cloud image now?"; then
+        mkdir -p "$(dirname "$CLOUD_IMG_PATH")"
+        info "Downloading from ${CLOUD_IMG_URL} ..."
+        wget -q --show-progress -O "$CLOUD_IMG_PATH" "$CLOUD_IMG_URL" \
+            || error "Failed to download cloud image."
+        success "Cloud image downloaded."
+    else
+        prompt CLOUD_IMG_PATH "Enter path to existing .img/.qcow2 file" ""
+        [[ -f "$CLOUD_IMG_PATH" ]] || error "File not found: ${CLOUD_IMG_PATH}"
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# Additional options
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Additional Options ──${NC}\n"
+
+if confirm "Enable QEMU Guest Agent in VM config?"; then
+    AGENT=1
+else
+    AGENT=0
+fi
+
+if confirm "Start VM after creation?"; then
+    START_VM=true
+else
+    START_VM=false
+fi
+
+# ──────────────────────────────────────────────
+# Summary & confirmation
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║               Configuration Summary              ║${NC}"
+echo -e "${BOLD}╠══════════════════════════════════════════════════╣${NC}"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "VM ID"        "$VMID"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Hostname"     "$VM_NAME"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "CPU Cores"    "$CPU_CORES"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "RAM"          "${RAM_MB} MB"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Disk"         "$DISK_SIZE"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Storage"      "${STORAGE} (${STORAGE_TYPE})"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Network"      "${BRIDGE}"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "IP Config"    "$IP_CONFIG"
+[[ -n "$VLAN_TAG" ]] && \
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "VLAN"         "$VLAN_TAG"
+[[ -n "$DNS_SERVERS" ]] && \
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "DNS"          "$DNS_SERVERS"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "User"         "$CI_USER"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "SSH Key"      "${SSH_KEYS_FILE:-none}"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Guest Agent"  "$( [[ $AGENT -eq 1 ]] && echo Yes || echo No )"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Docker"       "$( $INSTALL_DOCKER && echo Yes || echo No )"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "QEMU Agent"   "$( $INSTALL_AGENT && echo Yes || echo No )"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Auto-start"   "$( $START_VM && echo Yes || echo No )"
+echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
+
+echo
+if ! confirm "Proceed with VM creation?"; then
+    warn "Aborted by user."
+    exit 0
+fi
+
+# ──────────────────────────────────────────────
+# Build cloud-init vendor/user data (snippets)
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Preparing Cloud-Init Snippets ──${NC}\n"
+
+# Find a storage that supports 'snippets' content type
+SNIPPET_STORAGE=""
+while IFS= read -r line; do
+    [[ "$line" == Name* ]] && continue
+    s_name=$(echo "$line" | awk '{print $1}')
+    s_content=$(echo "$line" | awk '{print $4}')
+    if echo "$s_content" | grep -q "snippets"; then
+        SNIPPET_STORAGE="$s_name"
+        break
+    fi
+done < <(pvesm status 2>/dev/null)
+
+if [[ -z "$SNIPPET_STORAGE" ]]; then
+    warn "No storage with 'snippets' content type found."
+    warn "Enabling snippets on 'local' storage ..."
+    pvesm set local --content iso,vztmpl,snippets 2>/dev/null || true
+    SNIPPET_STORAGE="local"
+fi
+
+# Resolve the filesystem path for the snippets directory
+SNIPPET_PATH=$(pvesm path "${SNIPPET_STORAGE}:snippets/" 2>/dev/null | sed 's|/$||' || echo "/var/lib/vz/snippets")
+# Fallback: common default
+if [[ ! -d "$SNIPPET_PATH" ]]; then
+    SNIPPET_PATH="/var/lib/vz/snippets"
+fi
+mkdir -p "$SNIPPET_PATH"
+
+VENDOR_FILE="${SNIPPET_PATH}/vm-${VMID}-vendor.yaml"
+
+# Build the cloud-init config
+cat > "$VENDOR_FILE" <<'VENDOREOF'
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+VENDOREOF
+
+# Conditionally add packages
+if $INSTALL_AGENT; then
+    echo "  - qemu-guest-agent" >> "$VENDOR_FILE"
+fi
+
+if $INSTALL_DOCKER; then
+    cat >> "$VENDOR_FILE" <<'DOCKEREOF'
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+runcmd:
+  # Install Docker from official repository
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update -y
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+DOCKEREOF
+else
+    # If no docker, still need runcmd for agent
+    echo "" >> "$VENDOR_FILE"
+    echo "runcmd:" >> "$VENDOR_FILE"
+fi
+
+if $INSTALL_AGENT; then
+    cat >> "$VENDOR_FILE" <<'AGENTEOF'
+  # Enable qemu-guest-agent
+  - systemctl enable --now qemu-guest-agent
+AGENTEOF
+fi
+
+# Add user to docker group if docker is installed
+if $INSTALL_DOCKER; then
+    cat >> "$VENDOR_FILE" <<USEREOF
+  # Add cloud-init user to docker group
+  - usermod -aG docker ${CI_USER}
+USEREOF
+fi
+
+# Final reboot to ensure guest agent is picked up
+cat >> "$VENDOR_FILE" <<'REBOOTEOF'
+
+power_state:
+  mode: reboot
+  message: "Cloud-init provisioning complete. Rebooting..."
+  timeout: 30
+  condition: true
+REBOOTEOF
+
+success "Cloud-init vendor config written to ${VENDOR_FILE}"
+
+# ──────────────────────────────────────────────
+# Create the VM
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Creating VM ──${NC}\n"
+
+NET0="virtio,bridge=${BRIDGE}"
+[[ -n "$VLAN_TAG" ]] && NET0+=",tag=${VLAN_TAG}"
+
+info "Creating VM ${VMID} ..."
+qm create "$VMID" \
+    --name "$VM_NAME" \
+    --ostype l26 \
+    --cores "$CPU_CORES" \
+    --memory "$RAM_MB" \
+    --net0 "$NET0" \
+    --scsihw virtio-scsi-single \
+    --agent "$AGENT" \
+    --serial0 socket \
+    --vga serial0
+
+success "VM shell created."
+
+# Import disk
+info "Importing cloud image disk to ${STORAGE} ..."
+qm set "$VMID" --scsi0 "${STORAGE}:0,import-from=${CLOUD_IMG_PATH},iothread=1,discard=on"
+success "Disk imported."
+
+# Resize disk
+if [[ "$DISK_SIZE" != "0" ]]; then
+    info "Resizing disk to ${DISK_SIZE} ..."
+    qm disk resize "$VMID" scsi0 "$DISK_SIZE"
+    success "Disk resized."
+fi
+
+# Add cloud-init drive
+info "Adding cloud-init drive ..."
+qm set "$VMID" --ide2 "${STORAGE}:cloudinit"
+success "Cloud-init drive added."
+
+# Set boot order
+qm set "$VMID" --boot order=scsi0
+
+# ──────────────────────────────────────────────
+# Configure cloud-init
+# ──────────────────────────────────────────────
+info "Configuring cloud-init ..."
+
+qm set "$VMID" --ciuser "$CI_USER"
+
+if [[ -n "$CI_PASS" ]]; then
+    qm set "$VMID" --cipassword "$CI_PASS"
+fi
+
+if [[ -n "$SSH_KEYS_FILE" ]]; then
+    qm set "$VMID" --sshkeys "$SSH_KEYS_FILE"
+fi
+
+qm set "$VMID" --ipconfig0 "$IP_CONFIG"
+
+if [[ -n "$DNS_SERVERS" ]]; then
+    qm set "$VMID" --nameserver "${DNS_SERVERS//,/ }"
+fi
+
+if [[ -n "$DNS_DOMAIN" ]]; then
+    qm set "$VMID" --searchdomain "$DNS_DOMAIN"
+fi
+
+# Attach the vendor cloud-init snippet
+qm set "$VMID" --cicustom "vendor=${SNIPPET_STORAGE}:snippets/vm-${VMID}-vendor.yaml"
+
+success "Cloud-init configured."
+
+# Regenerate cloud-init image
+qm cloudinit update "$VMID" 2>/dev/null || true
+
+# ──────────────────────────────────────────────
+# Start VM (optional)
+# ──────────────────────────────────────────────
+if $START_VM; then
+    info "Starting VM ${VMID} ..."
+    qm start "$VMID"
+    success "VM ${VMID} started."
+    echo
+    info "The VM will reboot once after first boot to complete provisioning."
+    info "Docker and guest agent will be available after the reboot (~2-3 min)."
+fi
+
+echo -e "\n${GREEN}${BOLD}VM ${VMID} (${VM_NAME}) created successfully!${NC}\n"
+
+if [[ "$IP_MODE" == "2" ]]; then
+    IP_DISPLAY="${VM_IP%%/*}"
+    echo -e "  Connect:  ${CYAN}ssh ${CI_USER}@${IP_DISPLAY}${NC}"
+fi
+
+echo -e "  Console:  ${CYAN}qm terminal ${VMID}${NC}"
+echo -e "  Status:   ${CYAN}qm status ${VMID}${NC}"
+if $INSTALL_DOCKER; then
+    echo -e "  Docker:   ${CYAN}docker compose version${NC}  (after first-boot reboot)"
+fi
+echo
