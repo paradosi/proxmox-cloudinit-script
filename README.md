@@ -1,16 +1,26 @@
-# Proxmox Ubuntu 22.04 Cloud-Init VM Creator
+# Proxmox Cloud-Init VM Creator
 
-Interactive bash script that creates Ubuntu 22.04 (Jammy) cloud-init VMs on Proxmox VE with automatic installation of Docker Compose v2 and qemu-guest-agent.
+Interactive bash script that creates cloud-init VMs on Proxmox VE with automatic installation of Docker Compose v2 and qemu-guest-agent.
+
+## Supported Operating Systems
+
+| OS | Versions | Default User |
+|----|----------|-------------|
+| **Ubuntu** | 22.04 LTS (Jammy), 24.04 LTS (Noble), 24.10 (Oracular) | `ubuntu` |
+| **Debian** | 11 (Bullseye), 12 (Bookworm) | `debian` |
+| **Fedora** | 40, 41 | `fedora` |
+| **Custom** | Any cloud image (.img/.qcow2) | configurable |
 
 ## Features
 
+- **Multi-distro support** — Ubuntu, Debian, and Fedora with official cloud images
 - **Auto-detects storage** — identifies LVM, ZFS, directory, Ceph, and network-backed pools
-- **Interactive prompts** — VM ID, hostname, CPU, RAM, disk, network (DHCP/static), VLAN, SSH keys, user/password
+- **Interactive prompts** — OS, VM ID, hostname, CPU, RAM, disk, network (DHCP/static), VLAN, SSH keys, user/password
 - **Cloud-init provisioning** — installs packages on first boot via vendor data snippets:
   - `qemu-guest-agent`
-  - Docker Engine (official apt repo)
+  - Docker Engine (official repo — apt for Ubuntu/Debian, dnf for Fedora)
   - Docker Compose v2 (plugin)
-- **Downloads cloud image** — fetches the official Ubuntu 22.04 cloud image if not already cached
+- **Downloads cloud image** — fetches the official cloud image if not already cached
 - **Summary + confirmation** — shows a full config table before creating anything
 
 ## Requirements
@@ -41,6 +51,7 @@ sudo ./create-vm.sh
 
 | Prompt | Default | Description |
 |--------|---------|-------------|
+| Operating system | Ubuntu 22.04 | Choose from Ubuntu, Debian, Fedora, or custom image |
 | Storage pool | auto-detected | Only pools supporting disk images are shown |
 | VM ID | 9000 | Validates uniqueness and range (>=100) |
 | Hostname | ubuntu-cloud | Sets the VM name and cloud-init hostname |
@@ -51,9 +62,9 @@ sudo ./create-vm.sh
 | IP mode | Static | DHCP or static with CIDR + gateway |
 | DNS | 1.1.1.1, 8.8.8.8 | Nameservers for static IP |
 | VLAN tag | none | Optional 802.1Q tag |
-| Username | ubuntu | Cloud-init default user |
-| Password | none | Optional password auth |
-| SSH key | ~/.ssh/id_rsa.pub | Public key file or inline key |
+| Username | per-distro | Cloud-init default user (ubuntu/debian/fedora) |
+| Password | none | Optional — enables SSH password auth via cloud-init |
+| SSH key | ~/.ssh/id_rsa.pub | Public key file or paste key directly |
 | Docker | yes | Docker Engine + Compose v2 plugin |
 | Guest Agent | yes | qemu-guest-agent service |
 | Auto-start | prompt | Start the VM immediately after creation |
@@ -63,7 +74,7 @@ sudo ./create-vm.sh
 The VM will boot, run cloud-init, install all packages, then **reboot once** automatically. After the reboot (~2-3 minutes), Docker and the guest agent will be ready:
 
 ```bash
-ssh ubuntu@<VM_IP>
+ssh <user>@<VM_IP>
 docker compose version    # Docker Compose v2
 sudo systemctl status qemu-guest-agent
 ```

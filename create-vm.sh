@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Interactive Proxmox Cloud-Init VM Creator
-# Creates Ubuntu 22.04 cloud-init VMs on Proxmox VE
+# Supports: Ubuntu, Debian, Fedora cloud images
 # Installs: qemu-guest-agent, Docker Engine, Docker Compose v2
 #
 set -euo pipefail
@@ -61,7 +61,7 @@ confirm() {
 # Pre-flight checks
 # ──────────────────────────────────────────────
 echo -e "\n${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║   Proxmox Ubuntu 22.04 Cloud-Init VM Creator     ║${NC}"
+echo -e "${BOLD}║    Proxmox Cloud-Init VM Creator                 ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}\n"
 
 if [[ $EUID -ne 0 ]]; then
@@ -225,7 +225,7 @@ prompt VLAN_TAG "VLAN tag (leave empty for none)" ""
 # ──────────────────────────────────────────────
 echo -e "\n${BOLD}── User & SSH Configuration ──${NC}\n"
 
-prompt CI_USER "Cloud-init username" "ubuntu"
+prompt CI_USER "Cloud-init username" "$DEFAULT_USER"
 
 if confirm "Set a password for ${CI_USER}?"; then
     prompt_password CI_PASS "Password"
@@ -289,18 +289,123 @@ if ! confirm "Install qemu-guest-agent?"; then
 fi
 
 # ──────────────────────────────────────────────
-# Cloud image
+# OS Selection & Cloud Image
 # ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Operating System ──${NC}\n"
+
+echo -e "  ${CYAN}Ubuntu:${NC}"
+echo -e "    ${BOLD}1)${NC}  Ubuntu 22.04 LTS (Jammy)"
+echo -e "    ${BOLD}2)${NC}  Ubuntu 24.04 LTS (Noble)"
+echo -e "    ${BOLD}3)${NC}  Ubuntu 24.10 (Oracular)"
+echo -e ""
+echo -e "  ${CYAN}Debian:${NC}"
+echo -e "    ${BOLD}4)${NC}  Debian 11 (Bullseye)"
+echo -e "    ${BOLD}5)${NC}  Debian 12 (Bookworm)"
+echo -e ""
+echo -e "  ${CYAN}Fedora:${NC}"
+echo -e "    ${BOLD}6)${NC}  Fedora 40"
+echo -e "    ${BOLD}7)${NC}  Fedora 41"
+echo -e ""
+echo -e "  ${CYAN}Other:${NC}"
+echo -e "    ${BOLD}8)${NC}  Custom image (provide path or URL)"
+echo
+
+prompt OS_CHOICE "Select OS (1-8)" "1"
+
+# OS_FAMILY is used later for Docker install method (apt vs dnf)
+case "$OS_CHOICE" in
+    1)
+        OS_NAME="Ubuntu 22.04 LTS (Jammy)"
+        OS_FAMILY="ubuntu"
+        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+        CLOUD_IMG_FILE="jammy-server-cloudimg-amd64.img"
+        DEFAULT_USER="ubuntu"
+        ;;
+    2)
+        OS_NAME="Ubuntu 24.04 LTS (Noble)"
+        OS_FAMILY="ubuntu"
+        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+        CLOUD_IMG_FILE="noble-server-cloudimg-amd64.img"
+        DEFAULT_USER="ubuntu"
+        ;;
+    3)
+        OS_NAME="Ubuntu 24.10 (Oracular)"
+        OS_FAMILY="ubuntu"
+        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/oracular/current/oracular-server-cloudimg-amd64.img"
+        CLOUD_IMG_FILE="oracular-server-cloudimg-amd64.img"
+        DEFAULT_USER="ubuntu"
+        ;;
+    4)
+        OS_NAME="Debian 11 (Bullseye)"
+        OS_FAMILY="debian"
+        CLOUD_IMG_URL="https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-genericcloud-amd64.qcow2"
+        CLOUD_IMG_FILE="debian-11-genericcloud-amd64.qcow2"
+        DEFAULT_USER="debian"
+        ;;
+    5)
+        OS_NAME="Debian 12 (Bookworm)"
+        OS_FAMILY="debian"
+        CLOUD_IMG_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+        CLOUD_IMG_FILE="debian-12-genericcloud-amd64.qcow2"
+        DEFAULT_USER="debian"
+        ;;
+    6)
+        OS_NAME="Fedora 40"
+        OS_FAMILY="fedora"
+        CLOUD_IMG_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-40-1.14.x86_64.qcow2"
+        CLOUD_IMG_FILE="Fedora-Cloud-Base-Generic-40-1.14.x86_64.qcow2"
+        DEFAULT_USER="fedora"
+        ;;
+    7)
+        OS_NAME="Fedora 41"
+        OS_FAMILY="fedora"
+        CLOUD_IMG_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2"
+        CLOUD_IMG_FILE="Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2"
+        DEFAULT_USER="fedora"
+        ;;
+    8)
+        OS_NAME="Custom"
+        OS_FAMILY="custom"
+        DEFAULT_USER="root"
+        echo
+        echo -e "  ${CYAN}1)${NC} apt-based (Ubuntu/Debian)"
+        echo -e "  ${CYAN}2)${NC} dnf-based (Fedora/RHEL)"
+        prompt CUSTOM_PKG_MGR "Package manager type (1 or 2)" "1"
+        if [[ "$CUSTOM_PKG_MGR" == "2" ]]; then
+            OS_FAMILY="fedora"
+        else
+            OS_FAMILY="debian"
+        fi
+        ;;
+    *)
+        error "Invalid selection: ${OS_CHOICE}"
+        ;;
+esac
+
+success "Selected: ${OS_NAME}"
+
 echo -e "\n${BOLD}── Cloud Image ──${NC}\n"
 
-CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-CLOUD_IMG_PATH="/var/lib/vz/template/iso/jammy-server-cloudimg-amd64.img"
+if [[ "$OS_CHOICE" == "8" ]]; then
+    prompt CUSTOM_IMG "Path to .img/.qcow2 file or download URL" ""
+    if [[ "$CUSTOM_IMG" =~ ^https?:// ]]; then
+        CLOUD_IMG_URL="$CUSTOM_IMG"
+        CLOUD_IMG_FILE=$(basename "$CUSTOM_IMG")
+    elif [[ -f "$CUSTOM_IMG" ]]; then
+        CLOUD_IMG_PATH="$CUSTOM_IMG"
+        CLOUD_IMG_FILE=$(basename "$CUSTOM_IMG")
+    else
+        error "File not found and not a URL: ${CUSTOM_IMG}"
+    fi
+fi
+
+CLOUD_IMG_PATH="${CLOUD_IMG_PATH:-/var/lib/vz/template/iso/${CLOUD_IMG_FILE}}"
 
 if [[ -f "$CLOUD_IMG_PATH" ]]; then
     success "Cloud image already downloaded: ${CLOUD_IMG_PATH}"
 else
-    info "Ubuntu 22.04 cloud image not found locally."
-    if confirm "Download Ubuntu 22.04 (Jammy) cloud image now?"; then
+    info "${OS_NAME} cloud image not found locally."
+    if confirm "Download ${OS_NAME} cloud image now?"; then
         mkdir -p "$(dirname "$CLOUD_IMG_PATH")"
         info "Downloading from ${CLOUD_IMG_URL} ..."
         wget -q --show-progress -O "$CLOUD_IMG_PATH" "$CLOUD_IMG_URL" \
@@ -335,6 +440,7 @@ fi
 echo -e "\n${BOLD}╔══════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}║               Configuration Summary              ║${NC}"
 echo -e "${BOLD}╠══════════════════════════════════════════════════╣${NC}"
+printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "OS"           "$OS_NAME"
 printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "VM ID"        "$VMID"
 printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "Hostname"     "$VM_NAME"
 printf "${BOLD}║${NC} %-18s │ %-28s ${BOLD}║${NC}\n" "CPU Cores"    "$CPU_CORES"
@@ -429,22 +535,39 @@ if $INSTALL_AGENT; then
 fi
 
 if $INSTALL_DOCKER; then
-    cat >> "$VENDOR_FILE" <<'DOCKEREOF'
+    if [[ "$OS_FAMILY" == "fedora" ]]; then
+        cat >> "$VENDOR_FILE" <<'DOCKEREOF'
+  - ca-certificates
+  - curl
+  - dnf-plugins-core
+
+runcmd:
+  # Install Docker from official repository (dnf)
+  - dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo
+  - dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+DOCKEREOF
+    else
+        # apt-based (Ubuntu / Debian)
+        cat >> "$VENDOR_FILE" <<'DOCKEREOF'
   - ca-certificates
   - curl
   - gnupg
-  - lsb-release
 
 runcmd:
-  # Install Docker from official repository
+  # Install Docker from official repository (apt)
   - install -m 0755 -d /etc/apt/keyrings
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  - chmod a+r /etc/apt/keyrings/docker.asc
-  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+  - |
+    . /etc/os-release
+    DOCKER_DIST="$ID"
+    curl -fsSL "https://download.docker.com/linux/${DOCKER_DIST}/gpg" -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${DOCKER_DIST} $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
   - apt-get update -y
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - systemctl enable --now docker
 DOCKEREOF
+    fi
 else
     # If no docker, still need runcmd for agent
     echo "" >> "$VENDOR_FILE"
