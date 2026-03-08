@@ -236,13 +236,24 @@ fi
 SSH_KEYS_FILE=""
 if confirm "Add an SSH public key?"; then
     prompt SSH_KEY_INPUT "Path to SSH public key file or paste the key" "$HOME/.ssh/id_rsa.pub"
+
+    # Resolve the key content
     if [[ -f "$SSH_KEY_INPUT" ]]; then
-        SSH_KEYS_FILE="$SSH_KEY_INPUT"
-        success "SSH key file found: ${SSH_KEYS_FILE}"
+        SSH_KEY_CONTENT=$(cat "$SSH_KEY_INPUT")
+        success "SSH key file found: ${SSH_KEY_INPUT}"
     else
+        SSH_KEY_CONTENT="$SSH_KEY_INPUT"
+    fi
+
+    # Validate it looks like an SSH public key
+    if ! echo "$SSH_KEY_CONTENT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
+        warn "Does not look like a valid SSH public key. Skipping."
+        SSH_KEYS_FILE=""
+    else
+        # Write to a clean temp file (one key per line, no trailing whitespace)
         SSH_KEYS_FILE=$(mktemp /tmp/ssh_key_XXXXXX.pub)
-        echo "$SSH_KEY_INPUT" > "$SSH_KEYS_FILE"
-        success "SSH key saved to temporary file."
+        echo "$SSH_KEY_CONTENT" | sed 's/[[:space:]]*$//' > "$SSH_KEYS_FILE"
+        success "SSH key validated and ready."
     fi
 fi
 
