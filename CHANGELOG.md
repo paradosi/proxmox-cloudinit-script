@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Ubuntu 26.04 LTS support in `create-vm.sh`
+- Future-friendly Ubuntu cloud-image selection to reduce per-release maintenance
+
+### Changed
+- Updated the README to reflect Ubuntu 26.04 support and the new cloud-image selection approach
+- Refreshed the repository description to match the expanded Ubuntu support
+
 ## [1.0.0] - 2026-03-08
 
 ### Added
