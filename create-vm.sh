@@ -170,125 +170,6 @@ STORAGE_TYPE="${STORAGE_MAP[$STORAGE]}"
 success "Using storage: ${STORAGE} (${STORAGE_TYPE})"
 
 # ──────────────────────────────────────────────
-# VM configuration prompts
-# ──────────────────────────────────────────────
-echo -e "\n${BOLD}── VM Configuration ──${NC}\n"
-
-while true; do
-    prompt VMID "VM ID (100-999999)" "9000"
-    if ! [[ "$VMID" =~ ^[0-9]+$ ]] || [[ "$VMID" -lt 100 ]]; then
-        warn "VM ID must be a number >= 100. Try again."
-        continue
-    fi
-    if qm status "$VMID" &>/dev/null; then
-        warn "VM ${VMID} already exists. Choose a different ID."
-        continue
-    fi
-    break
-done
-
-prompt VM_NAME "VM hostname" "ubuntu-cloud"
-prompt CPU_CORES "CPU cores" "2"
-prompt RAM_MB "RAM in MB" "2048"
-prompt DISK_SIZE "Disk size (e.g. 20G, 50G)" "20G"
-
-# ──────────────────────────────────────────────
-# Network configuration
-# ──────────────────────────────────────────────
-echo -e "\n${BOLD}── Network Configuration ──${NC}\n"
-
-BRIDGES=$(ip link show type bridge 2>/dev/null | grep -oP '^\d+: \K[^:]+' || echo "vmbr0")
-info "Detected bridges: ${BRIDGES}"
-
-prompt BRIDGE "Network bridge" "vmbr0"
-
-echo -e "  ${CYAN}1)${NC} DHCP"
-echo -e "  ${CYAN}2)${NC} Static IP"
-prompt IP_MODE "IP mode (1 or 2)" "2"
-
-if [[ "$IP_MODE" == "2" ]]; then
-    prompt VM_IP "Static IP with CIDR (e.g. 192.168.1.100/24)" ""
-    prompt GATEWAY "Gateway" ""
-    prompt DNS_SERVERS "DNS servers (comma-separated)" "1.1.1.1,8.8.8.8"
-    prompt DNS_DOMAIN "Search domain (optional)" ""
-    IP_CONFIG="ip=${VM_IP},gw=${GATEWAY}"
-else
-    IP_CONFIG="ip=dhcp"
-    DNS_SERVERS=""
-    DNS_DOMAIN=""
-fi
-
-prompt VLAN_TAG "VLAN tag (leave empty for none)" ""
-
-# ──────────────────────────────────────────────
-# User & SSH configuration
-# ──────────────────────────────────────────────
-echo -e "\n${BOLD}── User & SSH Configuration ──${NC}\n"
-
-prompt CI_USER "Cloud-init username" "$DEFAULT_USER"
-
-if confirm "Set a password for ${CI_USER}?"; then
-    prompt_password CI_PASS "Password"
-else
-    CI_PASS=""
-fi
-
-SSH_KEYS_FILE=""
-if confirm "Add an SSH public key?"; then
-    prompt SSH_KEY_INPUT "Path to SSH public key file on this server, or paste the key directly" "$HOME/.ssh/id_rsa.pub"
-
-    # Resolve the key content
-    if [[ -f "$SSH_KEY_INPUT" ]]; then
-        SSH_KEY_CONTENT=$(cat "$SSH_KEY_INPUT")
-        success "SSH key file found: ${SSH_KEY_INPUT}"
-    elif echo "$SSH_KEY_INPUT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
-        # Input looks like an actual key pasted inline
-        SSH_KEY_CONTENT="$SSH_KEY_INPUT"
-    else
-        # Not a valid file and not a key — probably a path that doesn't exist here
-        warn "File not found: ${SSH_KEY_INPUT}"
-        warn "If the key is on another machine, paste the key content directly."
-        echo
-        read -rp "$(echo -e "${BOLD}Paste your SSH public key (or leave empty to skip)${NC}: ")" SSH_KEY_CONTENT
-    fi
-
-    # Validate it looks like an SSH public key
-    if [[ -z "$SSH_KEY_CONTENT" ]]; then
-        info "No SSH key provided. Skipping."
-        SSH_KEYS_FILE=""
-    elif ! echo "$SSH_KEY_CONTENT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
-        warn "Does not look like a valid SSH public key. Skipping."
-        SSH_KEYS_FILE=""
-    else
-        # Write to a clean temp file (one key per line, no trailing whitespace)
-        SSH_KEYS_FILE=$(mktemp /tmp/ssh_key_XXXXXX.pub)
-        echo "$SSH_KEY_CONTENT" | sed 's/[[:space:]]*$//' > "$SSH_KEYS_FILE"
-        success "SSH key validated and ready."
-    fi
-fi
-
-# ──────────────────────────────────────────────
-# Software options
-# ──────────────────────────────────────────────
-echo -e "\n${BOLD}── Software Packages ──${NC}\n"
-
-info "The following will be installed via cloud-init on first boot:"
-echo -e "  ${GREEN}●${NC} qemu-guest-agent"
-echo -e "  ${GREEN}●${NC} Docker Engine (official repo)"
-echo -e "  ${GREEN}●${NC} Docker Compose v2 (plugin)"
-echo
-
-INSTALL_DOCKER=true
-if ! confirm "Install Docker + Compose v2?"; then
-    INSTALL_DOCKER=false
-fi
-
-INSTALL_AGENT=true
-if ! confirm "Install qemu-guest-agent?"; then
-    INSTALL_AGENT=false
-fi
-
-# ──────────────────────────────────────────────
 # OS Selection & Cloud Image
 # ──────────────────────────────────────────────
 echo -e "\n${BOLD}── Operating System ──${NC}\n"
@@ -384,6 +265,127 @@ esac
 
 success "Selected: ${OS_NAME}"
 
+# ──────────────────────────────────────────────
+# VM configuration prompts
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── VM Configuration ──${NC}\n"
+
+while true; do
+    prompt VMID "VM ID (100-999999)" "9000"
+    if ! [[ "$VMID" =~ ^[0-9]+$ ]] || [[ "$VMID" -lt 100 ]]; then
+        warn "VM ID must be a number >= 100. Try again."
+        continue
+    fi
+    if qm status "$VMID" &>/dev/null; then
+        warn "VM ${VMID} already exists. Choose a different ID."
+        continue
+    fi
+    break
+done
+
+prompt VM_NAME "VM hostname" "ubuntu-cloud"
+prompt CPU_CORES "CPU cores" "2"
+prompt RAM_MB "RAM in MB" "2048"
+prompt DISK_SIZE "Disk size (e.g. 20G, 50G)" "20G"
+prompt CI_USER "Cloud-init username" "$DEFAULT_USER"
+
+# ──────────────────────────────────────────────
+# Network configuration
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Network Configuration ──${NC}\n"
+
+BRIDGES=$(ip link show type bridge 2>/dev/null | grep -oP '^\d+: \K[^:]+' || echo "vmbr0")
+info "Detected bridges: ${BRIDGES}"
+
+prompt BRIDGE "Network bridge" "vmbr0"
+
+echo -e "  ${CYAN}1)${NC} DHCP"
+echo -e "  ${CYAN}2)${NC} Static IP"
+prompt IP_MODE "IP mode (1 or 2)" "2"
+
+if [[ "$IP_MODE" == "2" ]]; then
+    prompt VM_IP "Static IP with CIDR (e.g. 192.168.1.100/24)" ""
+    prompt GATEWAY "Gateway" ""
+    prompt DNS_SERVERS "DNS servers (comma-separated)" "1.1.1.1,8.8.8.8"
+    prompt DNS_DOMAIN "Search domain (optional)" ""
+    IP_CONFIG="ip=${VM_IP},gw=${GATEWAY}"
+else
+    IP_CONFIG="ip=dhcp"
+    DNS_SERVERS=""
+    DNS_DOMAIN=""
+fi
+
+prompt VLAN_TAG "VLAN tag (leave empty for none)" ""
+
+# ──────────────────────────────────────────────
+# User & SSH configuration
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── User & SSH Configuration ──${NC}\n"
+
+if confirm "Set a password for ${CI_USER}?"; then
+    prompt_password CI_PASS "Password"
+else
+    CI_PASS=""
+fi
+
+SSH_KEYS_FILE=""
+if confirm "Add an SSH public key?"; then
+    prompt SSH_KEY_INPUT "Path to SSH public key file on this server, or paste the key directly" "$HOME/.ssh/id_rsa.pub"
+
+    # Resolve the key content
+    if [[ -f "$SSH_KEY_INPUT" ]]; then
+        SSH_KEY_CONTENT=$(cat "$SSH_KEY_INPUT")
+        success "SSH key file found: ${SSH_KEY_INPUT}"
+    elif echo "$SSH_KEY_INPUT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
+        # Input looks like an actual key pasted inline
+        SSH_KEY_CONTENT="$SSH_KEY_INPUT"
+    else
+        # Not a valid file and not a key — probably a path that doesn't exist here
+        warn "File not found: ${SSH_KEY_INPUT}"
+        warn "If the key is on another machine, paste the key content directly."
+        echo
+        read -rp "$(echo -e "${BOLD}Paste your SSH public key (or leave empty to skip)${NC}: ")" SSH_KEY_CONTENT
+    fi
+
+    # Validate it looks like an SSH public key
+    if [[ -z "$SSH_KEY_CONTENT" ]]; then
+        info "No SSH key provided. Skipping."
+        SSH_KEYS_FILE=""
+    elif ! echo "$SSH_KEY_CONTENT" | grep -qE '^(ssh-(rsa|ed25519|ecdsa)|ecdsa-sha2-)'; then
+        warn "Does not look like a valid SSH public key. Skipping."
+        SSH_KEYS_FILE=""
+    else
+        # Write to a clean temp file (one key per line, no trailing whitespace)
+        SSH_KEYS_FILE=$(mktemp /tmp/ssh_key_XXXXXX.pub)
+        echo "$SSH_KEY_CONTENT" | sed 's/[[:space:]]*$//' > "$SSH_KEYS_FILE"
+        success "SSH key validated and ready."
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# Software options
+# ──────────────────────────────────────────────
+echo -e "\n${BOLD}── Software Packages ──${NC}\n"
+
+info "The following will be installed via cloud-init on first boot:"
+echo -e "  ${GREEN}●${NC} qemu-guest-agent"
+echo -e "  ${GREEN}●${NC} Docker Engine (official repo)"
+echo -e "  ${GREEN}●${NC} Docker Compose v2 (plugin)"
+echo
+
+INSTALL_DOCKER=true
+if ! confirm "Install Docker + Compose v2?"; then
+    INSTALL_DOCKER=false
+fi
+
+INSTALL_AGENT=true
+if ! confirm "Install qemu-guest-agent?"; then
+    INSTALL_AGENT=false
+fi
+
+# ──────────────────────────────────────────────
+# Cloud Image
+# ──────────────────────────────────────────────
 echo -e "\n${BOLD}── Cloud Image ──${NC}\n"
 
 if [[ "$OS_CHOICE" == "8" ]]; then
