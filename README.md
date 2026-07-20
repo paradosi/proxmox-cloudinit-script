@@ -6,7 +6,7 @@ Interactive bash script that creates cloud-init VMs on Proxmox VE with automatic
 
 | OS | Versions | Default User |
 |----|----------|-------------|
-| **Ubuntu** | 22.04 LTS (Jammy), 24.04 LTS (Noble), 24.10 (Oracular) | `ubuntu` |
+| **Ubuntu** | 22.04 LTS (Jammy), 24.04 LTS (Noble), 24.10 (Oracular), 26.04 LTS (Resolute) | `ubuntu` |
 | **Debian** | 11 (Bullseye), 12 (Bookworm) | `debian` |
 | **Fedora** | 40, 41 | `fedora` |
 | **Custom** | Any cloud image (.img/.qcow2) | configurable |
@@ -14,6 +14,7 @@ Interactive bash script that creates cloud-init VMs on Proxmox VE with automatic
 ## Features
 
 - **Multi-distro support** — Ubuntu, Debian, and Fedora with official cloud images
+- **Future-friendly Ubuntu selection** — Ubuntu cloud-image metadata is centralized to make new releases easier to add
 - **Auto-detects storage** — identifies LVM, ZFS, directory, Ceph, and network-backed pools
 - **Interactive prompts** — OS, VM ID, hostname, CPU, RAM, disk, network (DHCP/static), VLAN, SSH keys, user/password
 - **Cloud-init provisioning** — installs packages on first boot via vendor data snippets:
