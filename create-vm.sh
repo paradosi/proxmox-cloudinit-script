@@ -178,20 +178,21 @@ echo -e "  ${CYAN}Ubuntu:${NC}"
 echo -e "    ${BOLD}1)${NC}  Ubuntu 22.04 LTS (Jammy)"
 echo -e "    ${BOLD}2)${NC}  Ubuntu 24.04 LTS (Noble)"
 echo -e "    ${BOLD}3)${NC}  Ubuntu 24.10 (Oracular)"
+echo -e "    ${BOLD}4)${NC}  Ubuntu 26.04 LTS (Resolute)"
 echo -e ""
 echo -e "  ${CYAN}Debian:${NC}"
-echo -e "    ${BOLD}4)${NC}  Debian 11 (Bullseye)"
-echo -e "    ${BOLD}5)${NC}  Debian 12 (Bookworm)"
+echo -e "    ${BOLD}5)${NC}  Debian 11 (Bullseye)"
+echo -e "    ${BOLD}6)${NC}  Debian 12 (Bookworm)"
 echo -e ""
 echo -e "  ${CYAN}Fedora:${NC}"
-echo -e "    ${BOLD}6)${NC}  Fedora 40"
-echo -e "    ${BOLD}7)${NC}  Fedora 41"
+echo -e "    ${BOLD}7)${NC}  Fedora 40"
+echo -e "    ${BOLD}8)${NC}  Fedora 41"
 echo -e ""
 echo -e "  ${CYAN}Other:${NC}"
-echo -e "    ${BOLD}8)${NC}  Custom image (provide path or URL)"
+echo -e "    ${BOLD}9)${NC}  Custom image (provide path or URL)"
 echo
 
-prompt OS_CHOICE "Select OS (1-8)" "1"
+prompt OS_CHOICE "Select OS (1-9)" "1"
 
 # OS_FAMILY is used later for Docker install method (apt vs dnf)
 case "$OS_CHOICE" in
@@ -217,34 +218,41 @@ case "$OS_CHOICE" in
         DEFAULT_USER="ubuntu"
         ;;
     4)
+        OS_NAME="Ubuntu 26.04 LTS (Resolute)"
+        OS_FAMILY="ubuntu"
+        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img"
+        CLOUD_IMG_FILE="resolute-server-cloudimg-amd64.img"
+        DEFAULT_USER="ubuntu"
+        ;;
+    5)
         OS_NAME="Debian 11 (Bullseye)"
         OS_FAMILY="debian"
         CLOUD_IMG_URL="https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-genericcloud-amd64.qcow2"
         CLOUD_IMG_FILE="debian-11-genericcloud-amd64.qcow2"
         DEFAULT_USER="debian"
         ;;
-    5)
+    6)
         OS_NAME="Debian 12 (Bookworm)"
         OS_FAMILY="debian"
         CLOUD_IMG_URL="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
         CLOUD_IMG_FILE="debian-12-genericcloud-amd64.qcow2"
         DEFAULT_USER="debian"
         ;;
-    6)
+    7)
         OS_NAME="Fedora 40"
         OS_FAMILY="fedora"
         CLOUD_IMG_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-40-1.14.x86_64.qcow2"
         CLOUD_IMG_FILE="Fedora-Cloud-Base-Generic-40-1.14.x86_64.qcow2"
         DEFAULT_USER="fedora"
         ;;
-    7)
+    8)
         OS_NAME="Fedora 41"
         OS_FAMILY="fedora"
         CLOUD_IMG_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/41/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2"
         CLOUD_IMG_FILE="Fedora-Cloud-Base-Generic-41-1.4.x86_64.qcow2"
         DEFAULT_USER="fedora"
         ;;
-    8)
+    9)
         OS_NAME="Custom"
         OS_FAMILY="custom"
         DEFAULT_USER="root"
@@ -388,7 +396,7 @@ fi
 # ──────────────────────────────────────────────
 echo -e "\n${BOLD}── Cloud Image ──${NC}\n"
 
-if [[ "$OS_CHOICE" == "8" ]]; then
+if [[ "$OS_CHOICE" == "9" ]]; then
     prompt CUSTOM_IMG "Path to .img/.qcow2 file or download URL" ""
     if [[ "$CUSTOM_IMG" =~ ^https?:// ]]; then
         CLOUD_IMG_URL="$CUSTOM_IMG"
