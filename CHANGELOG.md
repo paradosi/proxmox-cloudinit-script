@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Ubuntu 26.04 LTS (Resolute) as menu option 4 in `create-vm.sh`
+- `ubuntu_cloud_image()` helper function that builds the cloud image URL and filename from a release codename, eliminating per-release boilerplate and making it easy to add future Ubuntu releases
+- Updated README to document Ubuntu 26.04 LTS support and the future-friendly Ubuntu image selection approach
+
 ## [1.0.0] - 2026-03-08
 
 ### Added
