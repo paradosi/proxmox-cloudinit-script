@@ -57,6 +57,16 @@ confirm() {
     [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
 }
 
+# Set Ubuntu cloud image variables from a release codename.
+# Usage: ubuntu_cloud_image <codename>
+# Sets: CLOUD_IMG_URL, CLOUD_IMG_FILE, DEFAULT_USER
+ubuntu_cloud_image() {
+    local codename="$1"
+    CLOUD_IMG_URL="https://cloud-images.ubuntu.com/${codename}/current/${codename}-server-cloudimg-amd64.img"
+    CLOUD_IMG_FILE="${codename}-server-cloudimg-amd64.img"
+    DEFAULT_USER="ubuntu"
+}
+
 # ──────────────────────────────────────────────
 # Pre-flight checks
 # ──────────────────────────────────────────────
@@ -199,30 +209,22 @@ case "$OS_CHOICE" in
     1)
         OS_NAME="Ubuntu 22.04 LTS (Jammy)"
         OS_FAMILY="ubuntu"
-        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-        CLOUD_IMG_FILE="jammy-server-cloudimg-amd64.img"
-        DEFAULT_USER="ubuntu"
+        ubuntu_cloud_image "jammy"
         ;;
     2)
         OS_NAME="Ubuntu 24.04 LTS (Noble)"
         OS_FAMILY="ubuntu"
-        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
-        CLOUD_IMG_FILE="noble-server-cloudimg-amd64.img"
-        DEFAULT_USER="ubuntu"
+        ubuntu_cloud_image "noble"
         ;;
     3)
         OS_NAME="Ubuntu 24.10 (Oracular)"
         OS_FAMILY="ubuntu"
-        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/oracular/current/oracular-server-cloudimg-amd64.img"
-        CLOUD_IMG_FILE="oracular-server-cloudimg-amd64.img"
-        DEFAULT_USER="ubuntu"
+        ubuntu_cloud_image "oracular"
         ;;
     4)
         OS_NAME="Ubuntu 26.04 LTS (Resolute)"
         OS_FAMILY="ubuntu"
-        CLOUD_IMG_URL="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img"
-        CLOUD_IMG_FILE="resolute-server-cloudimg-amd64.img"
-        DEFAULT_USER="ubuntu"
+        ubuntu_cloud_image "resolute"
         ;;
     5)
         OS_NAME="Debian 11 (Bullseye)"
